@@ -17,7 +17,7 @@ pub fn parse(data: Utf8Bytes) -> Option<Message> {
     };
 
     if let Some(Value::Array(updates)) = msg.pointer("/M") {
-        if updates.len() < 1 { return None; }
+       if updates.is_empty() { return None; }
         let mut ups = Vec::new();
         for update in updates {
             let Some(cat) = update.pointer("/A/0").and_then(|v| v.as_str()) else { continue; };
