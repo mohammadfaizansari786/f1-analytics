@@ -362,6 +362,8 @@ elif page == "Live Telemetry":
     except Exception as e:
         st.error(f"Error initializing Race Center: {e}")
 
+# ... (Previous code for Page 1 and Page 2 remains the same)
+
 # --- PAGE 3: STRATEGY LAB ---
 elif page == "Strategy Lab":
     st.title("♟️ STRATEGY & PACE ANALYSIS")
@@ -369,25 +371,47 @@ elif page == "Strategy Lab":
     # Reusing existing logic but wrapped in new UI
     try:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
-        completed_races = schedule[schedule['Session5'].notna()]['EventName'].tolist()
-        
-        sel_race = st.selectbox("Select Race for Analysis", completed_races)
-        
-        if st.button("Analyze Strategy"):
-            with st.spinner("Crunching numbers..."):
-                r_map = dict(zip(schedule['EventName'], schedule['RoundNumber']))
-                round_num = r_map[sel_race]
+        # Check if schedule is not empty and has data
+        if not schedule.empty:
+            races_with_data = schedule[schedule['Session5'].notna()]
+            completed_races = races_with_data['EventName'].tolist()
+            
+            if completed_races:
+                sel_race = st.selectbox("Select Race for Analysis", completed_races)
                 
-                session = fastf1.get_session(year, round_num, 'R')
-                session.load()
-                
-                # Tyre Strategy Chart
-                st.markdown("### 🛞 Tyre Compound History")
-                fig = dashboard.plot_strategy_dashboard(year, round_num)
-                st.pyplot(fig)
-                
-                # Pace Analysis
-                st.markdown("### ⏱️ Race Pace Distribution")
-                try:
-                    # Quick boxplot of lap times
-                    laps = session.laps.pick_quickl
+                if st.button("Analyze Strategy"):
+                    with st.spinner("Crunching numbers..."):
+                        # Get Round Number
+                        r_map = dict(zip(schedule['EventName'], schedule['RoundNumber']))
+                        round_num = r_map[sel_race]
+                        
+                        # Load Session
+                        session = fastf1.get_session(year, round_num, 'R')
+                        session.load()
+                        
+                        # Tyre Strategy Chart
+                        st.markdown("### 🛞 Tyre Compound History")
+                        fig = dashboard.plot_strategy_dashboard(year, round_num)
+                        if fig:
+                            st.pyplot(fig)
+                        
+                        # Pace Analysis
+                        st.markdown("### ⏱️ Race Pace Distribution")
+                        try:
+                            # Quick boxplot of lap times
+                            laps = session.laps.pick_quicklaps()
+                            fig_pace = px.box(
+                                laps, x="Driver", y="LapTimeSeconds", color="Team",
+                                title="Lap Time Distribution by Driver"
+                            )
+                            fig_pace.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)")
+                            st.plotly_chart(fig_pace, use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"Not enough data for pace analysis: {e}")
+            else:
+                st.info("No races completed yet this season.")
+        else:
+            st.error("Could not fetch schedule.")
+
+    except Exception as e:
+        st.error(f"Strategy module error: {e}")
