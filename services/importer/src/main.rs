@@ -46,7 +46,7 @@ async fn parse_update(pool: &PgPool, state: Value, updates: Vec<(String, Value)>
         match &topic[..] {
             "timingData" => {
                 if let Some(drivers) = parse_timing_update(&state, update).await {
-                    for driver in drivers { let _ = insert_timing_driver(pool, driver).await; }
+                    for driver in drivers { let _ = insert_timing_driver(pool, &driver).await; }
                 }
             }
             "timingAppData" => {
@@ -59,4 +59,57 @@ async fn parse_update(pool: &PgPool, state: Value, updates: Vec<(String, Value)>
     }
     Ok(())
 }
-// Include parse_timing_update, parse_tire_update, save_initial_state helper functions here (as seen in original file)
+
+// --- MISSING IMPLEMENTATIONS ADDED BELOW ---
+
+async fn save_initial_state(pool: &PgPool, initial: Value) -> Result<(), Error> {
+    let state = serde_json::from_value::<State>(initial)?;
+    
+    // Save Timing Data
+    for (nr, driver) in &state.timing_data.lines {
+        // Pass None for lap and update since this is initial state
+        if let Some(d) = parse_timing_driver(nr, None, driver, None) {
+             let _ = insert_timing_driver(pool, &d).await;
+        }
+    }
+
+    // Save Tire Data
+    for (nr, driver) in &state.timing_app_data.lines {
+         if let Some(d) = parse_tire_driver(nr, None, driver, None) {
+             let _ = insert_tire_driver(pool, d).await;
+         }
+    }
+    Ok(())
+}
+
+async fn parse_timing_update(state: &State, update: Value) -> Option<Vec<TimingDriver>> {
+    let lines = update.get("lines")?.as_object()?;
+    let mut drivers = Vec::new();
+    
+    for (nr, value) in lines {
+        if let Some(driver_data) = state.timing_data.lines.get(nr) {
+            // Note: We pass None for lap here as logic to extract current lap from state/update is complex
+            // and often handled by the database or downstream logic.
+            if let Some(d) = parse_timing_driver(nr, None, driver_data, Some(value)) {
+                drivers.push(d);
+            }
+        }
+    }
+    
+    if drivers.is_empty() { None } else { Some(drivers) }
+}
+
+async fn parse_tire_update(state: &State, update: Value) -> Option<Vec<TireDriver>> {
+    let lines = update.get("lines")?.as_object()?;
+    let mut drivers = Vec::new();
+    
+    for (nr, value) in lines {
+        if let Some(driver_data) = state.timing_app_data.lines.get(nr) {
+            if let Some(d) = parse_tire_driver(nr, None, driver_data, Some(value)) {
+                drivers.push(d);
+            }
+        }
+    }
+    
+    if drivers.is_empty() { None } else { Some(drivers) }
+}
