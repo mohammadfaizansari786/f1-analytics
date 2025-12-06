@@ -4,6 +4,7 @@ use axum::{extract::{ws::{Message, WebSocket}, State, WebSocketUpgrade}, respons
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info};
+use tokio::net::TcpListener;
 
 pub struct AppState { tx: broadcast::Sender<String>, mpsc_tx: mpsc::Sender<()> }
 
@@ -17,12 +18,9 @@ fn addr() -> SocketAddr {
 pub async fn init(tx: broadcast::Sender<String>, mpsc_tx: mpsc::Sender<()>) {
     let app_state = Arc::new(AppState { tx, mpsc_tx });
     let app = Router::new().route("/ws", get(handle_http)).with_state(app_state.clone());
-    let addr = addr();
-    info!("serving ws simulator on {}", addr);
-    hyper::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .expect("failed to serve http server");
+    let listener = TcpListener::bind(addr()).await.expect("failed to bind to port");
+    info!("serving ws simulator on {}", addr());
+    axum::serve(listener, app).await.expect("failed to serve http server");
 }
 
 async fn handle_http(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
