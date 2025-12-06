@@ -8,8 +8,18 @@ pub struct TireDriver {
 }
 
 pub async fn insert_tire_driver(pool: &PgPool, driver: TireDriver) -> Result<(), anyhow::Error> {
-    sqlx::query(r#"insert into tire_driver (nr, lap, compound, laps) values ($1, $2, $3, $4)"#)
-        .bind(driver.nr).bind(driver.lap).bind(driver.compound).bind(driver.laps)
-        .execute(pool).await?;
+    sqlx::query(
+        r#"
+        insert into tire_driver (nr, lap, compound, laps)
+        values ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(driver.nr)
+    .bind(driver.lap)
+    .bind(driver.compound)
+    .bind(driver.laps)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
