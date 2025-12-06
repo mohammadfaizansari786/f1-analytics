@@ -1,8 +1,10 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import fastf1
+import plotly.express as px
+import plotly.graph_objects as go
 import os
+from datetime import timedelta
 
 # --- IMPORT LOCAL MODULES ---
 import data_collector
@@ -13,59 +15,106 @@ import telemetry_view
 
 # 1. APP CONFIGURATION
 st.set_page_config(
-    page_title="F1 2025 Command Center", 
+    page_title="F1 Analytics Pro", 
     page_icon="🏎️", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 2. CUSTOM CSS STYLING
+# 2. MODERN F1 UI STYLING
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Titillium+Web:wght@300;400;600;700&display=swap');
+    
+    /* Global Theme */
+    .stApp {
+        background-color: #0e0e0e;
+        color: #e0e0e0;
+    }
     
     html, body, [class*="css"] {
         font-family: 'Titillium Web', sans-serif;
     }
     
+    /* Headers */
     h1, h2, h3 {
         color: #FF1801 !important; 
         font-weight: 800;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 1.2px;
     }
     
-    /* Metrics Box */
-    div[data-testid="stMetricValue"] {
-        font-family: 'Titillium Web', monospace;
-        font-size: 24px;
-        color: white;
+    /* Cards (Glassmorphism) */
+    .f1-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+        backdrop-filter: blur(10px);
     }
     
-    /* Custom Card */
-    .weather-card {
-        background-color: #1c1c1c;
-        border-radius: 8px;
-        padding: 15px;
-        border-top: 3px solid #FF1801;
-        text-align: center;
+    .f1-card-header {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #FF1801;
+        margin-bottom: 12px;
+        border-bottom: 1px solid #333;
+        padding-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    /* Dataframes */
+    .stDataFrame {
+        border: none !important;
     }
     
+    /* Scrollable Feeds */
+    .feed-container {
+        height: 300px;
+        overflow-y: auto;
+        font-size: 0.9rem;
+        padding-right: 5px;
+    }
+    
+    .feed-item {
+        padding: 8px;
+        border-bottom: 1px solid #333;
+        display: flex;
+        gap: 10px;
+    }
+    
+    .feed-time {
+        color: #888;
+        min-width: 60px;
+        font-mono: true;
+    }
+    
+    .feed-msg {
+        color: #ddd;
+    }
+    
+    /* Violation Tag */
+    .violation-tag {
+        background-color: rgba(255, 24, 1, 0.2);
+        color: #ff4b4b;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        border: 1px solid #ff4b4b;
+    }
+
     /* Live Tag */
-    .live-tag {
+    .live-badge {
         background-color: #FF1801;
         color: white;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 0.8rem;
+        padding: 4px 12px;
+        border-radius: 20px;
         font-weight: bold;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.7; }
-        100% { opacity: 1; }
+        font-size: 0.8rem;
+        box-shadow: 0 0 10px rgba(255, 24, 1, 0.5);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -80,184 +129,265 @@ def setup_cache():
 
 setup_cache()
 
+# --- HELPER FUNCTIONS ---
+def get_race_control_messages(session):
+    """Fetch and format race control messages"""
+    try:
+        rc = session.race_control_messages
+        if rc is None or rc.empty:
+            return pd.DataFrame()
+        
+        # Format time
+        rc['Time'] = rc['Time'].dt.total_seconds().apply(lambda x: f"{int(x//3600):02}:{int((x%3600)//60):02}:{int(x%60):02}")
+        return rc.sort_values(by='Time', ascending=False)
+    except Exception:
+        return pd.DataFrame()
+
+def get_leaderboard(session):
+    """Get stylized leaderboard dataframe"""
+    try:
+        results = session.results
+        # Select and Rename
+        df = results[['Position', 'Abbreviation', 'TeamName', 'Time', 'Status', 'Points']].copy()
+        df['Position'] = df['Position'].astype(int)
+        df['Delta'] = df['Time'].astype(str).str.replace('0 days ', '')
+        
+        # Clean up Delta/Time column
+        # For the winner, show time. For others, show Gap? 
+        # FastF1 'Time' is race duration. 'Time' column in results is effectively interval for non-leaders often?
+        # Let's simplify for the dashboard
+        return df[['Position', 'Abbreviation', 'TeamName', 'Status', 'Points']]
+    except Exception:
+        return pd.DataFrame()
+
 # 4. SIDEBAR NAVIGATION
 with st.sidebar:
-    st.title("🏁 F1 INSIGHTS")
-    st.markdown("_Advanced Telemetry & Analytics_")
-    
-    st.markdown("---")
+    st.image("https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg", width=50)
+    st.title("F1 ANALYTICS")
     
     page = st.radio(
-        "NAVIGATION", 
-        ["Dashboard", "Race Center", "Strategy & Pace"], 
+        "MENU", 
+        ["Dashboard", "Live Telemetry", "Strategy Lab"], 
         label_visibility="collapsed"
     )
     
     st.markdown("---")
-    year = st.selectbox("SEASON", [2025, 2024, 2023], index=0)
+    st.subheader("Session Settings")
+    year = st.selectbox("Season", [2025, 2024, 2023], index=1)
     
-    # Session State Reset on Year Change
+    # Session Reset Logic
     if 'last_year' not in st.session_state:
         st.session_state['last_year'] = year
     if st.session_state['last_year'] != year:
         st.session_state['data_loaded'] = False
         st.session_state['last_year'] = year
 
-# --- PAGE 1: DASHBOARD ---
+# --- PAGE 1: SEASON DASHBOARD ---
 if page == "Dashboard":
     st.title(f"SEASON {year} OVERVIEW")
     
-    col1, col2 = st.columns([4, 1])
+    col1, col2 = st.columns([3, 1])
     with col2:
-        if st.button("🔄 Sync Data", use_container_width=True):
-            with st.spinner("Updating database..."):
+        if st.button("🔄 Sync Season Data", use_container_width=True):
+            with st.spinner("Syncing..."):
                 try:
                     data_collector.collect_full_season_data(year)
-                    st.success("Updated!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Update failed: {e}")
+                    st.warning(f"Sync partial/failed: {e}")
 
     try:
         df = visualizer.load_data(year)
         if df is not None:
+            # Top Stats Row
             latest_round = int(df['Round'].max())
             leader = df.groupby('Driver')['Points'].sum().idxmax()
-            top_team = df.groupby('Team')['Points'].sum().idxmax()
             
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Rounds Complete", f"{latest_round}/24")
-            m2.metric("Driver Leader", leader)
-            m3.metric("Constructor Leader", top_team)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Rounds", f"{latest_round}/24")
+            c2.metric("Leader", leader)
+            c3.metric("Top Team", df.groupby('Team')['Points'].sum().idxmax())
+            c4.metric("Avg Speed", f"{df['Speed'].mean():.0f} km/h")
             
-            st.markdown("---")
-            tab1, tab2 = st.tabs(["📈 Driver Standings", "📊 Team Performance"])
-            with tab1:
-                st.plotly_chart(visualizer.plot_championship_standings(df), use_container_width=True)
-            with tab2:
-                st.plotly_chart(visualizer.plot_team_performance(df), use_container_width=True)
+            st.markdown("### 🏆 Championship Battle")
+            st.plotly_chart(visualizer.plot_championship_standings(df), use_container_width=True)
+            
+            st.markdown("### 🏎️ Constructor Performance")
+            st.plotly_chart(visualizer.plot_team_performance(df), use_container_width=True)
         else:
-            st.info("⚠️ No local data found. Click 'Sync Data' to start.")
+            st.info("No data available. Please click 'Sync Season Data'.")
     except Exception as e:
-        st.error(f"Error loading dashboard: {e}")
+        st.error(f"Dashboard Error: {e}")
 
-# --- PAGE 2: RACE CENTER (Enhanced) ---
-elif page == "Race Center":
-    c_head, c_live = st.columns([5,1])
-    with c_head:
-        st.title("🔴 LIVE MATCH CENTER")
-    with c_live:
-        st.markdown('<div style="text-align: right; margin-top: 20px;"><span class="live-tag">LIVE FEED</span></div>', unsafe_allow_html=True)
-
+# --- PAGE 2: LIVE TELEMETRY (F1-DASH STYLE) ---
+elif page == "Live Telemetry":
+    # Header
+    h1, h2 = st.columns([4, 1])
+    with h1: st.title("RACE CONTROL CENTER")
+    with h2: st.markdown('<div style="text-align: right; margin-top: 15px;"><span class="live-badge">LIVE REPLAY</span></div>', unsafe_allow_html=True)
+    
+    # Selection Controls
     try:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
-        races_with_data = schedule[schedule['Session5'].notna()]
+        races_with_data = schedule[schedule['Session5'].notna()] # Completed races
         race_map = dict(zip(races_with_data['EventName'], races_with_data['RoundNumber']))
         
-        # Selection Area
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
-            selected_race_name = st.selectbox("Select Grand Prix", list(race_map.keys()), index=len(race_map)-1)
+            selected_race = st.selectbox("Grand Prix", list(race_map.keys()), index=len(race_map)-1)
         with c2:
-            lap_select = st.number_input("Select Lap", min_value=1, max_value=70, value=1)
+            session_type = st.selectbox("Session", ["Race", "Qualifying", "Sprint"], index=0)
         with c3:
-            st.write("") 
-            load_btn = st.button("Initialize Data", type="primary", use_container_width=True)
-        
-        round_num = race_map[selected_race_name]
-        anim = animator.RaceAnimator(year, round_num)
-        
-        # --- DATA LOADER ---
+            st.write("")
+            load_btn = st.button("LOAD SESSION", type="primary", use_container_width=True)
+
         if load_btn or st.session_state.get('data_loaded'):
             st.session_state['data_loaded'] = True
-            
-            with st.spinner("Fetching Session Data..."):
-                if anim.load_session():
-                    # --- WEATHER COMPONENT ---
-                    # Only show if session has weather data
-                    if hasattr(anim.session, 'weather_data'):
-                        w = anim.session.weather_data.iloc[0] # Start of session weather
-                        w_cols = st.columns(4)
-                        with w_cols[0]: st.metric("Air Temp", f"{w['AirTemp']}°C")
-                        with w_cols[1]: st.metric("Track Temp", f"{w['TrackTemp']}°C")
-                        with w_cols[2]: st.metric("Humidity", f"{w['Humidity']}%")
-                        with w_cols[3]: st.metric("Rain", "YES" if w['Rainfall'] else "NO")
-                    
-                    st.divider()
+            round_num = race_map[selected_race]
+            s_type = 'R' if session_type == "Race" else ('Q' if session_type == "Qualifying" else 'S')
 
-                    # --- TABS ---
-                    tab_map, tab_tel = st.tabs(["🗺️ Ghost Map", "📈 Telemetry"])
+            with st.spinner(f"Connecting to {selected_race} telemetry..."):
+                # Load Session
+                session = fastf1.get_session(year, round_num, s_type)
+                session.load(telemetry=True, weather=True, messages=True)
+                
+                # --- TOP ROW: LEADERBOARD & MAP ---
+                col_left, col_right = st.columns([1, 2])
+                
+                # 1. LEADERBOARD (Left)
+                with col_left:
+                    st.markdown('<div class="f1-card"><div class="f1-card-header">📊 LEADERBOARD</div>', unsafe_allow_html=True)
+                    lb_df = get_leaderboard(session)
                     
-                    with tab_map:
-                        fig = anim.create_plotly_animation(lap_number=lap_select)
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
+                    st.dataframe(
+                        lb_df,
+                        column_config={
+                            "Abbreviation": "Driver",
+                            "TeamName": "Team",
+                            "Points": st.column_config.ProgressColumn(
+                                "Pts", format="%d", min_value=0, max_value=26
+                            ),
+                            "Status": "Status"
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        height=400
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # 2. TRACK MAP (Right)
+                with col_right:
+                    st.markdown('<div class="f1-card"><div class="f1-card-header">🗺️ TRACK POSITION</div>', unsafe_allow_html=True)
+                    # Use existing animator or simple plotter
+                    try:
+                        circuit_info = session.get_circuit_info()
+                        track_fig = px.line(
+                            session.laps.pick_fastest().get_telemetry(), 
+                            x='X', y='Y', 
+                            title=None,
+                            height=400
+                        )
+                        track_fig.update_traces(line_color='#FF1801', line_width=4)
+                        track_fig.update_layout(
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(visible=False),
+                            yaxis=dict(visible=False),
+                            margin=dict(l=0, r=0, t=0, b=0)
+                        )
+                        st.plotly_chart(track_fig, use_container_width=True)
+                    except:
+                        st.info("Map data unavailable")
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # --- BOTTOM ROW: CONTROL PANELS ---
+                c_rc, c_vio, c_weather = st.columns(3)
+                
+                # Get Messages
+                all_msgs = get_race_control_messages(session)
+                
+                # 3. RACE CONTROL MESSAGES
+                with c_rc:
+                    st.markdown('<div class="f1-card"><div class="f1-card-header">📢 RACE CONTROL</div>', unsafe_allow_html=True)
+                    if not all_msgs.empty:
+                        # Filter out violations for main feed to reduce noise
+                        rc_msgs = all_msgs[~all_msgs['Message'].str.contains("VIOLATION|PENALTY", case=False, na=False)]
+                        st.dataframe(
+                            rc_msgs[['Time', 'Message']],
+                            hide_index=True,
+                            use_container_width=True,
+                            height=300
+                        )
+                    else:
+                        st.write("No messages.")
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # 4. VIOLATIONS
+                with c_vio:
+                    st.markdown('<div class="f1-card"><div class="f1-card-header">⚠️ INCIDENTS</div>', unsafe_allow_html=True)
+                    if not all_msgs.empty:
+                        vio_msgs = all_msgs[all_msgs['Message'].str.contains("VIOLATION|PENALTY|INVESTIGATION", case=False, na=False)]
+                        if not vio_msgs.empty:
+                            st.dataframe(
+                                vio_msgs[['Time', 'Message']],
+                                hide_index=True,
+                                use_container_width=True,
+                                height=300
+                            )
                         else:
-                            st.warning(f"Map data unavailable for Lap {lap_select}.")
+                            st.success("Clean Race - No Incidents")
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-                    with tab_tel:
-                        st.markdown("### Driver Input Comparison")
-                        drivers = anim.session.results['Abbreviation'].tolist()
+                # 5. WEATHER & ATMOSPHERE
+                with c_weather:
+                    st.markdown('<div class="f1-card"><div class="f1-card-header">🌤️ ATMOSPHERE</div>', unsafe_allow_html=True)
+                    if not session.weather_data.empty:
+                        curr_w = session.weather_data.iloc[-1]
                         
-                        dc1, dc2, dc3 = st.columns([1, 1, 1])
-                        with dc1: d1 = st.selectbox("Driver 1", drivers, index=0)
-                        with dc2: d2 = st.selectbox("Driver 2", drivers, index=1)
-                        with dc3: 
-                            st.write("")
-                            compare_btn = st.button("Compare Inputs", use_container_width=True)
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            st.metric("Air Temp", f"{curr_w['AirTemp']} °C")
+                            st.metric("Track Temp", f"{curr_w['TrackTemp']} °C")
+                        with col_b:
+                            st.metric("Humidity", f"{curr_w['Humidity']} %")
+                            st.metric("Pressure", f"{curr_w['Pressure']} mb")
                         
-                        if compare_btn:
-                            with st.spinner("Processing..."):
-                                t_fig, err = telemetry_view.plot_telemetry_comparison(anim.session, d1, d2, lap_select)
-                                if t_fig:
-                                    st.plotly_chart(t_fig, use_container_width=True)
-                                else:
-                                    st.error(f"Telemetry Error: {err}")
-                else:
-                    st.error("Failed to load session from FastF1.")
+                        st.markdown("---")
+                        rain_status = "WET" if curr_w['Rainfall'] else "DRY"
+                        st.markdown(f"<h3 style='text-align: center; color: {'#00b4d8' if curr_w['Rainfall'] else '#FF1801'}'>{rain_status} TRACK</h3>", unsafe_allow_html=True)
+                    else:
+                        st.write("Weather data unavailable")
+                    st.markdown('</div>', unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"System Error: {e}")
+        st.error(f"Error initializing Race Center: {e}")
 
-# --- PAGE 3: STRATEGY & PACE ---
-elif page == "Strategy & Pace":
-    st.title("♟️ STRATEGY ANALYSIS")
+# --- PAGE 3: STRATEGY LAB ---
+elif page == "Strategy Lab":
+    st.title("♟️ STRATEGY & PACE ANALYSIS")
     
+    # Reusing existing logic but wrapped in new UI
     try:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
-        races_with_data = schedule[schedule['Session5'].notna()]
-        race_map = dict(zip(races_with_data['EventName'], races_with_data['RoundNumber']))
+        completed_races = schedule[schedule['Session5'].notna()]['EventName'].tolist()
         
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            selected_race = st.selectbox("Select Grand Prix", list(race_map.keys()), index=len(race_map)-1)
-        with c2:
-            st.write("")
-            load_strat_btn = st.button("Load Analysis", type="primary", use_container_width=True)
-
-        if load_strat_btn:
-            round_num = race_map[selected_race]
-            with st.spinner(f"Analyzing {selected_race}..."):
-                # Load session locally for this page
+        sel_race = st.selectbox("Select Race for Analysis", completed_races)
+        
+        if st.button("Analyze Strategy"):
+            with st.spinner("Crunching numbers..."):
+                r_map = dict(zip(schedule['EventName'], schedule['RoundNumber']))
+                round_num = r_map[sel_race]
+                
                 session = fastf1.get_session(year, round_num, 'R')
                 session.load()
                 
-                t1, t2 = st.tabs(["🏎️ Race Pace", "🛞 Tyre Strategy"])
+                # Tyre Strategy Chart
+                st.markdown("### 🛞 Tyre Compound History")
+                fig = dashboard.plot_strategy_dashboard(year, round_num)
+                st.pyplot(fig)
                 
-                with t1:
-                    pace_fig = telemetry_view.plot_lap_times(session)
-                    if pace_fig:
-                        st.plotly_chart(pace_fig, use_container_width=True)
-                    else:
-                        st.warning("Could not load lap time data.")
-                
-                with t2:
-                    # Fallback to matplotlib dashboard if needed, or implement plotly version
-                    try:
-                        fig = dashboard.plot_strategy_dashboard(year, round_num=round_num)
-                        st.pyplot(fig, use_container_width=True)
-                    except:
-                        st.warning("Strategy data unavailable.")
-
-    except Exception as e:
-        st.error(f"Strategy Error: {e}")
+                # Pace Analysis
+                st.markdown("### ⏱️ Race Pace Distribution")
+                try:
+                    # Quick boxplot of lap times
+                    laps = session.laps.pick_quickl
