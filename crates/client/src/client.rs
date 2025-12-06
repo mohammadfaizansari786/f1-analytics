@@ -93,9 +93,15 @@ async fn negotiate() -> Result<Negotiaion, Box<dyn Error>> {
     let body = res.text().await?;
     let json = serde_json::from_str::<Value>(&body)?;
 
+    // Improved safety: Do not panic if SET_COOKIE is missing
+    let cookie = headers.get(header::SET_COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
     Ok(Negotiaion {
         token: json["ConnectionToken"].as_str().unwrap_or_default().to_string(),
-        cookie: headers[header::SET_COOKIE].to_str().unwrap_or_default().to_string(),
+        cookie,
     })
 }
 
