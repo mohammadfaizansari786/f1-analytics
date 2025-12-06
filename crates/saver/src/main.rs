@@ -1,7 +1,7 @@
 use std::{env, fs::File, io::{LineWriter, Write}};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, level_filters::LevelFilter, warn};
-use client;
+// FIX: Removed "use client;" warning
 
 #[tokio::main]
 async fn main() {
