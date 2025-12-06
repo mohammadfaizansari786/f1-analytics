@@ -2,34 +2,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import fastf1.plotting
-import plotly.express as px
 
-def plot_championship_standings(df):
-    """
-    Plots the championship points progression.
-    Expects df to have columns: ['Round', 'Driver', 'Points']
-    """
-    # Calculate cumulative points
-    df_sorted = df.sort_values(['Driver', 'Round'])
-    df_sorted['CumulativePoints'] = df_sorted.groupby('Driver')['Points'].cumsum()
-    
-    fig = px.line(
-        df_sorted, 
-        x="Round", 
-        y="CumulativePoints", 
-        color="Driver",
-        markers=True,
-        title="Driver Championship Battle"
-    )
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor="#333"),
-        hovermode="x unified"
-    )
-    return fig
 def load_data(year):
     """Loads the CSV data securely."""
     filename = f'f1_season_{year}_data.csv'
@@ -56,21 +29,22 @@ def get_team_color_map():
 def plot_championship_standings(df):
     """Creates an interactive line chart for driver standings."""
     # Aggregate points by round
+    # Sum points if multiple entries exist per round (e.g. Sprint + Race)
     df_grouped = df.groupby(['Round', 'Driver', 'Team'])['Points'].sum().reset_index()
-    
+
     # Calculate cumulative sum
     df_grouped.sort_values(by=['Driver', 'Round'], inplace=True)
     df_grouped['Cumulative Points'] = df_grouped.groupby('Driver')['Points'].cumsum()
-    
+
     # Filter top 10 drivers for clarity
     top_drivers = df_grouped.groupby('Driver')['Cumulative Points'].max().nlargest(10).index
     df_filtered = df_grouped[df_grouped['Driver'].isin(top_drivers)]
 
     # Plot
     fig = px.line(
-        df_filtered, 
-        x="Round", 
-        y="Cumulative Points", 
+        df_filtered,
+        x="Round",
+        y="Cumulative Points",
         color="Driver",
         line_group="Driver",
         hover_data=["Team"],
@@ -79,7 +53,7 @@ def plot_championship_standings(df):
         template="plotly_dark",
         color_discrete_sequence=px.colors.qualitative.Bold
     )
-    
+
     fig.update_layout(
         xaxis_title="Race Round",
         yaxis_title="Total Points",
@@ -96,10 +70,10 @@ def plot_team_performance(df):
     """Creates an interactive bar chart for constructor standings."""
     team_points = df.groupby(['Team'])['Points'].sum().reset_index()
     team_points = team_points.sort_values(by='Points', ascending=False)
-    
+
     # Map colors
     color_map = get_team_color_map()
-    
+
     fig = px.bar(
         team_points,
         x="Points",
@@ -111,7 +85,7 @@ def plot_team_performance(df):
         template="plotly_dark",
         color_discrete_map=color_map
     )
-    
+
     fig.update_layout(
         yaxis={'categoryorder':'total ascending'},
         showlegend=False,
