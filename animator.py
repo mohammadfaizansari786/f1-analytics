@@ -54,8 +54,7 @@ class RaceAnimator:
         
         # 4. Prepare Driver Data
         top_drivers = self.session.results.iloc[:10]['Abbreviation'].tolist()
-        frames_data = [] # List of lists for frame updates
-
+        
         # Pre-process driver positions
         driver_positions = {}
         for driver in top_drivers:
@@ -158,6 +157,10 @@ class RaceAnimator:
     def _get_driver_color(self, driver_abbr):
         # Helper to find color (simplified)
         try:
+            # Check if 'TeamName' column exists, otherwise handle gracefully
+            if 'TeamName' not in self.session.results.columns:
+                return "#FFFFFF"
+                
             team = self.session.results.loc[self.session.results['Abbreviation'] == driver_abbr, 'TeamName'].values[0]
             # Fuzzy match team name to visualizer map
             for key, color in self.team_colors.items():
