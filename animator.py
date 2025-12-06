@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import pandas as pd
 import numpy as np
-from matplotlib import font_manager
 
 # Enable FastF1 built-in plotting configurations
+# misc_mpl_mods=False prevents FastF1 from messing with some tick labels which we want to control
 fastf1.plotting.setup_mpl(misc_mpl_mods=False)
 
 class RaceAnimator:
@@ -14,132 +14,189 @@ class RaceAnimator:
         self.year = year
         self.round_num = round_num
         self.session = None
-        self.drivers = []
         
     def load_session(self):
         """Loads the race session and telemetry data."""
         try:
+            # Load Race session with full telemetry
             self.session = fastf1.get_session(self.year, self.round_num, 'R')
-            self.session.load()
+            self.session.load(telemetry=True, laps=True)
             return True
         except Exception as e:
             print(f"Error loading session: {e}")
             return False
 
     def create_animation(self, lap_number=1):
-        """Generates a high-quality HTML animation for a specific lap."""
+        """
+        Generates a robust HTML animation.
+        Uses SESSION TIME to sync drivers, creating a 'Live Replay' effect.
+        """
         if not self.session:
             return "Session not loaded."
 
-        # 1. Select Drivers (Top 10 for performance/clarity)
+        # 1. Identify the Time Window based on the Leader
+        # We want to view the race during the time the leader was on 'lap_number'
+        try:
+            # Get the driver who won or led this lap
+            top_driver = self.session.results.iloc[0]['Abbreviation']
+            leader_laps = self.session.laps.pick_driver(top_driver)
+            
+            # Select the specific lap
+            specific_lap = leader_laps[leader_laps['LapNumber'] == lap_number].iloc[0]
+            
+            # Define Start and End Session Times
+            t_start = specific_lap['LapStartTime']
+            t_end = specific_lap['Time'] # End of lap
+            
+            # Create the master clock (ticks every 200ms)
+            # This ensures all drivers are synced to the exact same moments
+            common_time = pd.timedelta_range(start=t_start, end=t_end, freq='200ms')
+            
+        except IndexError:
+            return f"<h3>Data Error</h3><p>Could not find timing data for Lap {lap_number}. It might not have happened yet.</p>"
+        except Exception as e:
+            return f"<h3>Error</h3><p>{str(e)}</p>"
+
+        # 2. Collect Data for Top 10 Drivers
+        # We fetch their location during the EXACT SAME window defined above
         top_drivers = self.session.results['Abbreviation'].iloc[:10].tolist()
-        
-        # 2. Get Reference Data (The Track)
-        # We use the fastest lap of the session to draw the clean track line
-        ref_lap = self.session.laps.pick_fastest()
-        ref_tel = ref_lap.get_telemetry()
-        
-        # 3. Prepare Driver Data
         driver_data = {}
         
-        # Create a common timeline for this specific lap
-        # We find the leader's start and end time for this lap to define the window
-        leader_lap = self.session.laps.pick_drivers(top_drivers[0]).pick_laps(lap_number).iloc[0]
-        start_time = leader_lap['LapStartTime']
-        end_time = leader_lap['Time']
-        
-        # Create a time range for 1 lap, interpolated to 200ms for smoothness (5fps)
-        common_time = pd.timedelta_range(start=start_time, end=end_time, freq='200ms')
-        
+        # Track limits for axis scaling
+        all_x = []
+        all_y = []
+
         for driver in top_drivers:
             try:
-                # Get lap data for driver
-                laps = self.session.laps.pick_drivers(driver).pick_laps(lap_number)
-                if laps.empty: continue
+                # Get all telemetry for the driver
+                # We fetch the whole session telemetry first to ensure we cover the window
+                # (Efficient enough for 10 drivers)
+                d_laps = self.session.laps.pick_driver(driver)
+                tel = d_laps.get_telemetry()
                 
-                # Get telemetry
-                lap = laps.iloc[0]
-                tel = lap.get_telemetry()
+                # Filter for our specific time window
+                # We use a buffer of 1 second to ensure interpolation works at the edges
+                mask = (tel['Time'] >= t_start - pd.Timedelta('1s')) & (tel['Time'] <= t_end + pd.Timedelta('1s'))
+                window_tel = tel.loc[mask].copy()
                 
-                # Merge to common timeline
-                merged = pd.merge_asof(
-                    pd.DataFrame({'Time': common_time}),
-                    tel[['Time', 'X', 'Y', 'Speed', 'nGear']],
-                    on='Time',
-                    direction='nearest'
-                )
+                if window_tel.empty:
+                    continue
+
+                # RE-INDEXING & INTERPOLATION (The secret to smooth animation)
+                # 1. Set index to Time
+                window_tel = window_tel.set_index('Time')
                 
+                # 2. Merge our common_time index into the data
+                # This adds rows for our specific tick marks (NaN values initially)
+                combined_index = window_tel.index.union(common_time).sort_values()
+                window_tel = window_tel.reindex(combined_index)
+                
+                # 3. Interpolate strictly numeric columns (X, Y, Speed)
+                # 'time' method respects the actual time gap between points
+                window_tel['X'] = window_tel['X'].interpolate(method='time')
+                window_tel['Y'] = window_tel['Y'].interpolate(method='time')
+                window_tel['Speed'] = window_tel['Speed'].interpolate(method='time')
+                window_tel['nGear'] = window_tel['nGear'].ffill() # Forward fill gear (discrete)
+                
+                # 4. Extract only the exact ticks we need
+                final_data = window_tel.loc[common_time]
+                
+                # Store valid data
                 driver_data[driver] = {
                     'color': fastf1.plotting.get_driver_color(driver, session=self.session),
-                    'x': merged['X'].to_numpy(),
-                    'y': merged['Y'].to_numpy(),
-                    'speed': merged['Speed'].fillna(0).to_numpy(),
-                    'gear': merged['nGear'].fillna(0).to_numpy()
+                    'x': final_data['X'].to_numpy(),
+                    'y': final_data['Y'].to_numpy(),
+                    'speed': final_data['Speed'].fillna(0).to_numpy(),
+                    'gear': final_data['nGear'].fillna(1).to_numpy()
                 }
+                
+                # Collect coordinates for auto-scaling
+                all_x.extend(final_data['X'].dropna().tolist())
+                all_y.extend(final_data['Y'].dropna().tolist())
+
             except Exception as e:
-                print(f"Skip driver {driver}: {e}")
+                print(f"Skipping {driver}: {e}")
                 continue
 
-        # 4. Setup Plot (Dark F1 Style)
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(12, 7))
-        ax.axis('off')
-        fig.patch.set_facecolor('#101010')
-        ax.set_facecolor('#101010')
-        
-        # Draw Track Map (Static)
-        ax.plot(ref_tel['X'], ref_tel['Y'], color='#2b2b2b', linewidth=12, zorder=1) # Border
-        ax.plot(ref_tel['X'], ref_tel['Y'], color='#383838', linewidth=6, zorder=2)  # Tarmac
+        if not driver_data:
+            return "<h3>No Telemetry Found</h3><p>Could not process drivers for this lap.</p>"
 
-        # 5. Initialize Animatable Elements
+        # 3. Setup Plot
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # CRITICAL FIX: Set explicit axis limits so the track doesn't disappear
+        # We add a 200m buffer around the min/max coordinates
+        if all_x and all_y:
+            buffer = 200
+            ax.set_xlim(min(all_x) - buffer, max(all_x) + buffer)
+            ax.set_ylim(min(all_y) - buffer, max(all_y) + buffer)
+        else:
+            ax.axis('equal') # Fallback
+            
+        ax.axis('off')
+        fig.patch.set_facecolor('#0E1117') # Match Streamlit Dark Theme
+        ax.set_facecolor('#0E1117')
+
+        # Draw Static Track Map (Background)
+        # We use the fastest lap of the session for the cleanest track shape
+        try:
+            fastest_lap = self.session.laps.pick_fastest()
+            fl_tel = fastest_lap.get_telemetry()
+            ax.plot(fl_tel['X'], fl_tel['Y'], color='#222222', linewidth=8, zorder=1) # Tarmac
+            ax.plot(fl_tel['X'], fl_tel['Y'], color='#333333', linewidth=3, zorder=2) # Centerline
+        except:
+            pass # If fastest lap fails, we just don't draw the background track
+
+        # 4. Initialize Animation Objects
         cars = {}
         labels = {}
         
-        # Info Panel Text
-        info_text = ax.text(0.02, 0.95, f"LAP {lap_number} | LIVE REPLAY", 
-                           transform=ax.transAxes, color='white', fontsize=14, fontweight='bold')
+        # Info Text
+        title_text = ax.text(0.02, 0.95, f"LAP {lap_number} REPLAY", transform=ax.transAxes, 
+                           color='white', fontsize=12, fontweight='bold', zorder=10)
         
-        leader_speed_text = ax.text(0.02, 0.90, "", 
-                                   transform=ax.transAxes, color='#FF1801', fontsize=12, fontfamily='monospace')
+        leader_text = ax.text(0.02, 0.90, "Waiting for data...", transform=ax.transAxes,
+                            color='#FF1801', fontsize=10, fontfamily='monospace', zorder=10)
 
+        # Create Line2D objects for each driver
         for driver, data in driver_data.items():
-            # Car Dot
-            dot, = ax.plot([], [], 'o', color=data['color'], markersize=10, 
-                           markeredgecolor='white', markeredgewidth=1.5, zorder=5)
-            # Driver Label
-            txt = ax.text(0, 0, driver, color='white', fontsize=9, fontweight='bold', zorder=6)
-            
+            dot, = ax.plot([], [], 'o', color=data['color'], markersize=8, 
+                           markeredgecolor='white', markeredgewidth=1, zorder=5)
+            txt = ax.text(0, 0, driver, color='white', fontsize=7, fontweight='bold', zorder=6)
             cars[driver] = dot
             labels[driver] = txt
 
-        # 6. Animation Loop
+        # 5. Update Function
         def update(frame):
-            artists = [info_text, leader_speed_text]
+            artists = [title_text, leader_text]
             
-            # Update Leader Telemetry (First driver in list)
+            # Update Leader Stats (First in list)
             leader_name = top_drivers[0]
-            if leader_name in driver_data and frame < len(driver_data[leader_name]['speed']):
+            if leader_name in driver_data:
                 s = driver_data[leader_name]['speed'][frame]
                 g = driver_data[leader_name]['gear'][frame]
-                leader_speed_text.set_text(f"{leader_name}: {int(s)} km/h [G{int(g)}]")
+                leader_text.set_text(f"LDR: {leader_name} | {int(s)} km/h | G{int(g)}")
 
-            # Update Cars
+            # Update Positions
             for driver, dot in cars.items():
                 d = driver_data[driver]
                 if frame < len(d['x']):
                     x, y = d['x'][frame], d['y'][frame]
+                    
+                    # Update dot
                     dot.set_data([x], [y])
                     
-                    # Update Label Position (offset slightly)
-                    txt = labels[driver]
-                    txt.set_position((x + 100, y + 100))
+                    # Update label (slight offset)
+                    labels[driver].set_position((x + 80, y + 80))
                     
                     artists.append(dot)
-                    artists.append(txt)
+                    artists.append(labels[driver])
             
             return artists
 
-        # Create Animation
+        # 6. Render
+        # blit=True creates smooth animation but requires returning changed artists
         ani = animation.FuncAnimation(
             fig, update, frames=len(common_time), blit=True, interval=100
         )
