@@ -5,4 +5,3 @@ fastf1
 numpy
 scipy
 plotly
-streamlit-extras
