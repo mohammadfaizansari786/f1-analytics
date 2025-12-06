@@ -7,7 +7,7 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use timescale::init_timescaledb;
-use server::{gap::get_driver_gap, health::healt_check, laptime::get_driver_laptimes};
+use server::{gap::get_driver_gap, health::health_check, laptime::get_driver_laptimes};
 
 mod server {
     pub mod gap;
@@ -31,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let app_state = Arc::new(AppState { pool });
 
     let app = Router::new()
-        .route("/api/health", get(healt_check))
+        .route("/api/health", get(health_check))
         .route("/api/laptime/{driver_nr}", get(get_driver_laptimes))
         .route("/api/gap/{driver_nr}", get(get_driver_gap))
         .layer(cors)
