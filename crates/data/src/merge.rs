@@ -8,7 +8,8 @@ pub fn merge(base: &mut Value, update: Value) {
         (Value::Array(ref mut a), Value::Array(b)) => { a.extend(b); }
         (Value::Array(ref mut prev), Value::Object(update)) => {
             for (k, v) in update {
-                if let Some(index) = k.parse::<usize>().ok() {
+                // Fix: Use if let Ok instead of .ok()
+                if let Ok(index) = k.parse::<usize>() {
                     if let Some(item) = prev.get_mut(index) { merge(item, v); } else { prev.push(v); }
                 }
             }
