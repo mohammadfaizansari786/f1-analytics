@@ -1,10 +1,11 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import fastf1
 import os
 
 # --- IMPORT LOCAL MODULES ---
-# Ensure these files are in the same directory or a python package
+# Ensure these files are in the same directory (root)
 import data_collector
 import visualizer
 import animator
@@ -18,25 +19,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. CUSTOM CSS STYLING (F1 Dark Theme)
+# 2. CUSTOM CSS STYLING (F1 Dark Theme & Fonts)
 st.markdown("""
 <style>
-    /* Import Titillium Web Font (F1 Standard) */
+    /* Import Titillium Web Font (Official F1 style) */
     @import url('https://fonts.googleapis.com/css2?family=Titillium+Web:wght@300;400;600;700&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Titillium Web', sans-serif;
     }
     
-    /* Headers */
+    /* Headers - F1 Red */
     h1, h2, h3 {
-        color: #FF1801 !important; /* F1 Red */
+        color: #FF1801 !important; 
         font-weight: 800;
         text-transform: uppercase;
         letter-spacing: 1px;
     }
     
-    /* Metric Cards */
+    /* KPI Metric Cards */
     [data-testid="stMetricValue"] {
         font-size: 2.5rem !important;
         color: #FFFFFF !important;
@@ -47,7 +48,7 @@ st.markdown("""
         color: #AAAAAA !important;
     }
     
-    /* Card/Container Style */
+    /* Glassmorphism Card Style */
     .stCard {
         background-color: #151515;
         padding: 20px;
@@ -57,7 +58,7 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Buttons */
+    /* Primary Action Buttons */
     div.stButton > button {
         background-color: #FF1801;
         color: white;
@@ -68,11 +69,11 @@ st.markdown("""
         transition: all 0.3s ease;
     }
     div.stButton > button:hover {
-        background-color: #CC0000;
+        background-color: #CC0000; /* Darker red on hover */
         transform: scale(1.02);
     }
     
-    /* Tabs */
+    /* Tabs Styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 10px;
     }
@@ -88,8 +89,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 3. CACHE SETUP
-# Essential for performance on the web
+# 3. CACHE SETUP (Crucial for Cloud Performance)
 @st.cache_resource
 def setup_cache():
     cache_dir = 'f1_cache'
@@ -119,25 +119,25 @@ with st.sidebar:
     year = st.selectbox("SEASON", [2025, 2024, 2023], index=0)
     
     st.markdown("---")
-    st.caption(f"Connected to FastF1 API\nData Cache: Enabled")
+    st.caption(f"Status: Connected\nAPI Cache: Enabled")
 
 # --- PAGE 1: CHAMPIONSHIP DASHBOARD ---
 if page == "Dashboard":
     st.title(f"SEASON {year} OVERVIEW")
     
-    # Top Action Bar
+    # Header & Sync Button
     col1, col2 = st.columns([4, 1])
     with col2:
         if st.button("🔄 Sync Data", use_container_width=True):
-            with st.spinner("Downloading latest season data..."):
+            with st.spinner("Updating database..."):
                 try:
                     data_collector.collect_full_season_data(year)
-                    st.success("Database Updated!")
+                    st.success("Updated!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Update failed: {e}")
 
-    # Load Data
+    # Load & Visualize Data
     try:
         df = visualizer.load_data(year)
         
@@ -154,18 +154,16 @@ if page == "Dashboard":
             
             st.markdown("---")
             
-            # Main Analytics Area (Tabs)
+            # Interactive Plotly Charts
             tab1, tab2 = st.tabs(["📈 Driver Standings", "📊 Team Performance"])
             
             with tab1:
                 st.markdown("### Championship Trajectory")
-                # Uses Plotly for interactive hovering
                 fig_drivers = visualizer.plot_championship_standings(df)
                 st.plotly_chart(fig_drivers, use_container_width=True)
                 
             with tab2:
                 st.markdown("### Constructor Points")
-                # Uses Plotly for interactive bars
                 fig_teams = visualizer.plot_team_performance(df)
                 st.plotly_chart(fig_teams, use_container_width=True)
                 
@@ -182,21 +180,18 @@ elif page == "Deep Dive":
     st.title("♟️ STRATEGY ANALYSIS")
     st.markdown("Analyze tyre compounds, stint lengths, and pit stop strategies.")
     
-    # Get Race List
     try:
+        # Fetch Race List
         schedule = fastf1.get_event_schedule(year, include_testing=False)
-        # Only show races that have happened (have data)
         races_with_data = schedule[schedule['Session5'].notna()]
-        
-        # Create a map: "Bahrain Grand Prix" -> Round 1
         race_map = dict(zip(races_with_data['EventName'], races_with_data['RoundNumber']))
         
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.markdown("### Select Grand Prix")
+            st.markdown("### Configuration")
             selected_race_name = st.selectbox(
-                "Choose a race to analyze:", 
+                "Select Grand Prix", 
                 list(race_map.keys()), 
                 index=len(race_map)-1
             )
@@ -209,24 +204,24 @@ elif page == "Deep Dive":
                 round_num = race_map[selected_race_name]
                 st.markdown(f"### Stint Analysis: {selected_race_name}")
                 
-                with st.spinner("Processing lap data..."):
+                with st.spinner(f"Analyzing Tyre Data for Round {round_num}..."):
                     try:
-                        # Renders the Matplotlib chart from dashboard.py
+                        # Renders Matplotlib chart from dashboard.py
                         fig = dashboard.plot_strategy_dashboard(year, round_num=round_num)
                         st.pyplot(fig, use_container_width=True)
                     except Exception as e:
-                        st.error(f"Could not analyze strategy: {e}")
+                        st.error(f"Analysis failed. Data might be incomplete. Error: {e}")
             else:
-                st.info("👈 Select a race and click 'Analyze' to view the tyre strategy chart.")
+                st.info("👈 Select a race to view tyre strategies.")
                 
     except Exception as e:
-        st.error(f"Could not load race schedule. Please check your connection. {e}")
+        st.error(f"Could not load race schedule: {e}")
 
 
-# --- PAGE 3: TELEMETRY REPLAY ---
+# --- PAGE 3: TELEMETRY REPLAY (HTML ANIMATION) ---
 elif page == "Live Replay":
     st.title("🎞️ RACE REPLAY")
-    st.caption("Generate a high-fidelity replay of Lap 5 using actual telemetry data.")
+    st.caption("Visualizing position changes for Lap 5 (Lightweight HTML Animation)")
     
     try:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
@@ -236,28 +231,29 @@ elif page == "Live Replay":
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.markdown("### Configuration")
+            st.markdown("### Replay Setup")
             selected_race_name = st.selectbox("Select Race", list(race_map.keys()), index=len(race_map)-1)
             
-            st.warning("⚠️ Rendering takes ~30-45 seconds.")
-            if st.button("Generate Video (MP4)", type="primary", use_container_width=True):
-                st.session_state['generate_video'] = True
+            if st.button("Generate Animation", type="primary", use_container_width=True):
+                st.session_state['generate_anim'] = True
                 
         with col2:
-            if st.session_state.get('generate_video'):
+            if st.session_state.get('generate_anim'):
                 round_num = race_map[selected_race_name]
                 
-                with st.spinner("Fetching Telemetry & Rendering Frames..."):
+                with st.spinner("Processing Telemetry & Rendering..."):
                     try:
-                        # Calls the updated animator.py (MP4 version)
-                        video_path = animator.animate_race(year, round_num=round_num)
+                        # Calls animator.py (HTML version)
+                        html_animation = animator.animate_race(year, round_num=round_num)
                         
-                        if "Error" in video_path:
-                            st.error(video_path)
+                        # Error Check
+                        if isinstance(html_animation, str) and "Error" in html_animation[:20]:
+                             st.error(html_animation)
                         else:
-                            st.success(f"Rendering Complete: {selected_race_name}")
-                            # Displays the MP4 video player
-                            st.video(video_path)
+                             st.success(f"Rendering Complete: {selected_race_name}")
+                             # Render the HTML directly (No video file needed)
+                             components.html(html_animation, height=700, scrolling=False)
+                             
                     except Exception as e:
                         st.error(f"Animation failed: {e}")
             else:
