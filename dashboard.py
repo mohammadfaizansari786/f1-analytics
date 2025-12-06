@@ -11,16 +11,14 @@ def plot_strategy_dashboard(year=2025, round_num=None):
     
     if round_num is None:
         raise ValueError("Round Number must be provided for the website.")
-        if not round_input.isdigit(): return
-        round_num = int(round_input)
 
     print(f"Loading Strategy Data for Round {round_num}...")
     try:
         session = fastf1.get_session(year, round_num, 'R')
         session.load()
-    except:
-        print("Could not load session.")
-        return
+    except Exception as e:
+        print(f"Could not load session: {e}")
+        return None
     
     laps = session.laps
     
@@ -31,10 +29,16 @@ def plot_strategy_dashboard(year=2025, round_num=None):
         'INTERMEDIATE': 'green', 'WET': 'blue'
     }
 
-    finishing_order = session.results.sort_values(by='Position')['Abbreviation'].tolist()
+    try:
+        finishing_order = session.results.sort_values(by='Position')['Abbreviation'].tolist()
+    except KeyError:
+        print("Results not available for sorting.")
+        finishing_order = session.drivers
 
     for i, driver in enumerate(finishing_order):
-        driver_laps = laps.pick_drivers(driver)
+        driver_laps = laps.pick_driver(driver)
+        if driver_laps.empty: continue
+        
         stints = driver_laps[['Driver', 'Stint', 'Compound', 'LapNumber']].groupby(['Driver', 'Stint', 'Compound'])
         
         for (d, stint, compound), data in stints:
