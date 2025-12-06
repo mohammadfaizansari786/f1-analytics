@@ -1,20 +1,19 @@
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
-import pandas as pd
 
 def plot_telemetry_comparison(session, driver1, driver2, lap_number):
     """
     Compares telemetry inputs (Throttle, Brake, RPM, Speed) between two drivers.
-    Inspired by f1-dash DriverCarMetrics.
     """
     try:
         laps1 = session.laps.pick_driver(driver1)
         laps2 = session.laps.pick_driver(driver2)
         
+        # Select the specific lap
         lap1 = laps1[laps1['LapNumber'] == lap_number].iloc[0]
         lap2 = laps2[laps2['LapNumber'] == lap_number].iloc[0]
         
+        # Get telemetry data
         tel1 = lap1.get_car_data().add_distance()
         tel2 = lap2.get_car_data().add_distance()
         
@@ -30,7 +29,7 @@ def plot_telemetry_comparison(session, driver1, driver2, lap_number):
             # Speed
             fig.add_trace(go.Scatter(x=tel['Distance'], y=tel['Speed'], name=f"{driver} Speed", 
                                    line=dict(color=c, width=2)), row=1, col=1)
-            # Throttle (Greenish for D1)
+            # Throttle
             fig.add_trace(go.Scatter(x=tel['Distance'], y=tel['Throttle'], name=f"{driver} Throttle",
                                    line=dict(color=c, width=1.5, dash='solid')), row=2, col=1)
             # Brake
@@ -58,4 +57,5 @@ def plot_telemetry_comparison(session, driver1, driver2, lap_number):
         
         return fig
     except Exception as e:
+        print(f"Telemetry Error: {e}")
         return None
