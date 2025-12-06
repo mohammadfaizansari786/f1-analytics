@@ -24,47 +24,60 @@ class RaceAnimator:
     def create_plotly_animation(self, lap_number=1):
         """
         Generates an interactive Plotly animation for a specific lap.
-        Mimics f1-dash's Map component with corner numbers and smooth dots.
         """
         if not self.session:
             return None
 
         # 1. Get Lap Window
         try:
-            # Sync to the winner's lap timing
-            winner = self.session.results.iloc[0]['Abbreviation']
-            ref_lap = self.session.laps.pick_driver(winner).pick_lap(lap_number)
+            # Sync to the winner's lap timing, or first available
+            try:
+                winner = self.session.results.iloc[0]['Abbreviation']
+            except:
+                winner = self.session.drivers[0]
+            
+            laps = self.session.laps.pick_driver(winner)
+            if laps.empty: return None
+
+            ref_lap = laps.pick_lap(lap_number)
+            if hasattr(ref_lap, 'empty') and ref_lap.empty: return None
+            
             t_start, t_end = ref_lap['LapStartTime'], ref_lap['Time']
             
-            # Resample time for animation (lower resolution for performance)
-            # 500ms intervals = 2fps roughly, good for web
+            # Resample time for animation (500ms intervals)
             common_time = pd.timedelta_range(start=t_start, end=t_end, freq='500ms')
         except Exception as e:
+            print(f"Animation init error: {e}")
             return None
 
         # 2. Get Track Map (Fastest Lap Telemetry)
-        fastest_lap = self.session.laps.pick_fastest()
-        circuit = fastest_lap.get_telemetry()
+        try:
+            fastest_lap = self.session.laps.pick_fastest()
+            circuit = fastest_lap.get_telemetry()
+        except:
+            return None
         
-        # 3. Get Corner Data (if available via circuit_info, otherwise approximation)
-        # FastF1 v3.1+ supports circuit_info
+        # 3. Get Corner Data
         corners = pd.DataFrame()
         if hasattr(self.session, 'circuit_info'):
             corners = self.session.circuit_info.corners
         
         # 4. Prepare Driver Data
-        top_drivers = self.session.results.iloc[:10]['Abbreviation'].tolist()
+        try:
+            top_drivers = self.session.results.iloc[:10]['Abbreviation'].tolist()
+        except:
+            top_drivers = self.session.drivers[:10]
         
-        # Pre-process driver positions
         driver_positions = {}
         for driver in top_drivers:
             try:
                 laps = self.session.laps.pick_driver(driver)
-                # Get telemetry for the specific time window
                 tel = laps.get_telemetry()
                 mask = (tel['Time'] >= t_start) & (tel['Time'] <= t_end)
                 window = tel.loc[mask].set_index('Time')
                 
+                if window.empty: continue
+
                 # Reindex to common clock
                 combined_idx = window.index.union(common_time).sort_values()
                 window = window.reindex(combined_idx)
@@ -84,16 +97,19 @@ class RaceAnimator:
             frame_data = []
             for driver in top_drivers:
                 if driver in driver_positions:
-                    pos = driver_positions[driver].iloc[i]
-                    frame_data.append(
-                        go.Scatter(
-                            x=[pos['X']], y=[pos['Y']],
-                            mode='markers+text',
-                            marker=dict(size=12, color=self._get_driver_color(driver), line=dict(width=1, color='white')),
-                            text=[driver], textposition="top center",
-                            name=driver
+                    try:
+                        pos = driver_positions[driver].iloc[i]
+                        frame_data.append(
+                            go.Scatter(
+                                x=[pos['X']], y=[pos['Y']],
+                                mode='markers+text',
+                                marker=dict(size=12, color=self._get_driver_color(driver), line=dict(width=1, color='white')),
+                                text=[driver], textposition="top center",
+                                name=driver
+                            )
                         )
-                    )
+                    except IndexError:
+                        continue
             frames.append(go.Frame(data=frame_data, name=str(i)))
 
         # 6. Create Figure
@@ -114,13 +130,13 @@ class RaceAnimator:
                     hoverinfo='skip',
                     showlegend=False
                 )
-            ] + [ # Initial Driver Positions (at t=0)
+            ] + [ # Initial Driver Positions
                 go.Scatter(
                     x=[driver_positions[d].iloc[0]['X']], 
                     y=[driver_positions[d].iloc[0]['Y']],
                     mode='markers+text',
                     marker=dict(size=12, color=self._get_driver_color(d)),
-                    text=[d],
+                    text=[d], textposition="top center",
                     name=d
                 ) for d in top_drivers if d in driver_positions
             ],
@@ -142,7 +158,6 @@ class RaceAnimator:
             frames=frames
         )
 
-        # Add Corners (Static)
         if not corners.empty:
             fig.add_trace(go.Scatter(
                 x=corners['X'], y=corners['Y'],
@@ -155,16 +170,18 @@ class RaceAnimator:
         return fig
 
     def _get_driver_color(self, driver_abbr):
-        # Helper to find color (simplified)
         try:
-            # Check if 'TeamName' column exists, otherwise handle gracefully
             if 'TeamName' not in self.session.results.columns:
                 return "#FFFFFF"
+            
+            # Filter safely
+            mask = self.session.results['Abbreviation'] == driver_abbr
+            if not mask.any():
+                return "#FFFFFF"
                 
-            team = self.session.results.loc[self.session.results['Abbreviation'] == driver_abbr, 'TeamName'].values[0]
-            # Fuzzy match team name to visualizer map
+            team = self.session.results.loc[mask, 'TeamName'].values[0]
             for key, color in self.team_colors.items():
-                if key in team: return color
+                if key in str(team): return color
             return "#FFFFFF"
         except:
             return "#FFFFFF"
