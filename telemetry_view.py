@@ -38,6 +38,11 @@ def plot_telemetry_comparison(session, driver1, driver2, lap_number):
                             subplot_titles=("Speed", "Throttle", "Brake", "RPM", "Gear"))
         
         colors = {driver1: '#FFFFFF', driver2: '#FF1801'} 
+
+        # Determine Brake Range (Handle 0-1 vs 0-100 scales)
+        max_brake = max(tel1['Brake'].max(), tel2['Brake'].max())
+        brake_range = [-0.1, 1.1] if max_brake <= 1.1 else [0, 105]
+        brake_title = "On/Off" if max_brake <= 1.1 else "%"
         
         for driver, tel, c in [(driver1, tel1, colors[driver1]), (driver2, tel2, colors[driver2])]:
             # Speed
@@ -70,7 +75,7 @@ def plot_telemetry_comparison(session, driver1, driver2, lap_number):
         
         fig.update_yaxes(title_text="km/h", row=1, col=1)
         fig.update_yaxes(title_text="%", range=[0, 105], row=2, col=1)
-        fig.update_yaxes(title_text="On/Off", range=[-0.1, 1.1], row=3, col=1, showticklabels=False)
+        fig.update_yaxes(title_text=brake_title, range=brake_range, row=3, col=1, showticklabels=(max_brake > 1.1))
         fig.update_yaxes(title_text="RPM", row=4, col=1)
         fig.update_yaxes(title_text="Gear", row=5, col=1)
         fig.update_xaxes(title_text="Distance (m)", row=5, col=1)
@@ -83,16 +88,26 @@ def plot_lap_times(session):
     """New: Compares lap times for all drivers."""
     try:
         laps = session.laps
-        drivers = session.results['Abbreviation'].unique()[:10] # Top 10
+        try:
+            drivers = session.results['Abbreviation'].unique()[:10] # Top 10
+        except:
+            drivers = session.drivers[:10]
         
         fig = go.Figure()
         
         for drv in drivers:
             drv_laps = laps.pick_driver(drv)
+            if drv_laps.empty: continue
+            
             # Filter out in/out laps (slow)
             drv_laps = drv_laps[drv_laps['LapTime'].notna()]
+            if drv_laps.empty: continue
+
             # Quick anomaly filter (107% rule approx)
-            threshold = drv_laps['LapTime'].min() * 1.07
+            min_lap = drv_laps['LapTime'].min()
+            if pd.isna(min_lap): continue
+            
+            threshold = min_lap * 1.07
             drv_laps = drv_laps[drv_laps['LapTime'] < threshold]
             
             fig.add_trace(go.Scatter(
@@ -112,5 +127,6 @@ def plot_lap_times(session):
             plot_bgcolor="#0E1117"
         )
         return fig
-    except:
+    except Exception as e:
+        print(f"Error plotting lap times: {e}")
         return None
