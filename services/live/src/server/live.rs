@@ -26,7 +26,8 @@ fn sse_event(message: Message) -> sse::Event {
 
 pub async fn sse_handler(State(state): State<Arc<AppState>>) -> Sse<impl Stream<Item = Result<sse::Event, Infallible>>> {
     let rx = state.tx.subscribe();
-    info!(state.tx.receiver_count(), "new sse connection");
+    // FIX: Added format string "{}" to print the count
+    info!("{} new sse connection", state.tx.receiver_count());
 
     let initial_state_lock = state.state.lock().unwrap();
     let initial_state = initial_state_lock.clone();
