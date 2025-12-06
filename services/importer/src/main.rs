@@ -66,17 +66,21 @@ async fn save_initial_state(pool: &PgPool, initial: Value) -> Result<(), Error> 
     let state = serde_json::from_value::<State>(initial)?;
     
     // Save Timing Data
-    for (nr, driver) in &state.timing_data.lines {
-        // Pass None for lap and update since this is initial state
-        if let Some(d) = parse_timing_driver(nr, None, driver, None) {
-             let _ = insert_timing_driver(pool, &d).await;
+    if let Some(timing_data) = &state.timing_data {
+        for (nr, driver) in &timing_data.lines {
+            // Pass None for lap and update since this is initial state
+            if let Some(d) = parse_timing_driver(nr, None, driver, None) {
+                 let _ = insert_timing_driver(pool, &d).await;
+            }
         }
     }
 
     // Save Tire Data
-    for (nr, driver) in &state.timing_app_data.lines {
-         if let Some(d) = parse_tire_driver(nr, None, driver, None) {
-             let _ = insert_tire_driver(pool, d).await;
+    if let Some(timing_app_data) = &state.timing_app_data {
+         for (nr, driver) in &timing_app_data.lines {
+             if let Some(d) = parse_tire_driver(nr, None, driver, None) {
+                 let _ = insert_tire_driver(pool, d).await;
+             }
          }
     }
     Ok(())
@@ -87,7 +91,7 @@ async fn parse_timing_update(state: &State, update: Value) -> Option<Vec<TimingD
     let mut drivers = Vec::new();
     
     for (nr, value) in lines {
-        if let Some(driver_data) = state.timing_data.lines.get(nr) {
+        if let Some(driver_data) = state.timing_data.as_ref().and_then(|td| td.lines.get(nr)) {
             // Note: We pass None for lap here as logic to extract current lap from state/update is complex
             // and often handled by the database or downstream logic.
             if let Some(d) = parse_timing_driver(nr, None, driver_data, Some(value)) {
@@ -104,7 +108,7 @@ async fn parse_tire_update(state: &State, update: Value) -> Option<Vec<TireDrive
     let mut drivers = Vec::new();
     
     for (nr, value) in lines {
-        if let Some(driver_data) = state.timing_app_data.lines.get(nr) {
+        if let Some(driver_data) = state.timing_app_data.as_ref().and_then(|td| td.lines.get(nr)) {
             if let Some(d) = parse_tire_driver(nr, None, driver_data, Some(value)) {
                 drivers.push(d);
             }
