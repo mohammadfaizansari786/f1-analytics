@@ -9,11 +9,11 @@ import data_collector
 import visualizer
 import animator
 import dashboard
-import telemetry_view  # Ensure this file exists in your directory
+import telemetry_view
 
 # 1. APP CONFIGURATION
 st.set_page_config(
-    page_title="F1 2025 Analytics Hub", 
+    page_title="F1 2025 Command Center", 
     page_icon="🏎️", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -35,13 +35,20 @@ st.markdown("""
         letter-spacing: 1px;
     }
     
-    .stCard {
-        background-color: #151515;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 4px solid #FF1801;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        margin-bottom: 20px;
+    /* Metrics Box */
+    div[data-testid="stMetricValue"] {
+        font-family: 'Titillium Web', monospace;
+        font-size: 24px;
+        color: white;
+    }
+    
+    /* Custom Card */
+    .weather-card {
+        background-color: #1c1c1c;
+        border-radius: 8px;
+        padding: 15px;
+        border-top: 3px solid #FF1801;
+        text-align: center;
     }
     
     /* Live Tag */
@@ -82,13 +89,19 @@ with st.sidebar:
     
     page = st.radio(
         "NAVIGATION", 
-        ["Dashboard", "Deep Dive", "Live Match"], 
+        ["Dashboard", "Race Center", "Strategy & Pace"], 
         label_visibility="collapsed"
     )
     
     st.markdown("---")
     year = st.selectbox("SEASON", [2025, 2024, 2023], index=0)
-    st.caption(f"Status: Connected\nAPI Cache: Enabled")
+    
+    # Session State Reset on Year Change
+    if 'last_year' not in st.session_state:
+        st.session_state['last_year'] = year
+    if st.session_state['last_year'] != year:
+        st.session_state['data_loaded'] = False
+        st.session_state['last_year'] = year
 
 # --- PAGE 1: DASHBOARD ---
 if page == "Dashboard":
@@ -128,41 +141,13 @@ if page == "Dashboard":
     except Exception as e:
         st.error(f"Error loading dashboard: {e}")
 
-# --- PAGE 2: STRATEGY ---
-elif page == "Deep Dive":
-    st.title("♟️ STRATEGY ANALYSIS")
-    try:
-        schedule = fastf1.get_event_schedule(year, include_testing=False)
-        races_with_data = schedule[schedule['Session5'].notna()]
-        race_map = dict(zip(races_with_data['EventName'], races_with_data['RoundNumber']))
-        
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            selected_race = st.selectbox("Select Grand Prix", list(race_map.keys()), index=len(race_map)-1)
-            if st.button("Analyze Strategy", type="primary", use_container_width=True):
-                st.session_state['show_strategy'] = True
-        
-        with col2:
-            if st.session_state.get('show_strategy'):
-                round_num = race_map[selected_race]
-                with st.spinner(f"Analyzing {selected_race}..."):
-                    try:
-                        fig = dashboard.plot_strategy_dashboard(year, round_num=round_num)
-                        st.pyplot(fig, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Analysis failed: {e}")
-    except Exception as e:
-        st.error(f"Could not load schedule: {e}")
-
-# --- PAGE 3: LIVE MATCH (Enhanced) ---
-elif page == "Live Match":
-    col_header, col_badge = st.columns([5, 1])
-    with col_header:
+# --- PAGE 2: RACE CENTER (Enhanced) ---
+elif page == "Race Center":
+    c_head, c_live = st.columns([5,1])
+    with c_head:
         st.title("🔴 LIVE MATCH CENTER")
-    with col_badge:
+    with c_live:
         st.markdown('<div style="text-align: right; margin-top: 20px;"><span class="live-tag">LIVE FEED</span></div>', unsafe_allow_html=True)
-
-    st.markdown("Interactive race replay and telemetry analysis.")
 
     try:
         schedule = fastf1.get_event_schedule(year, include_testing=False)
@@ -174,65 +159,105 @@ elif page == "Live Match":
         with c1:
             selected_race_name = st.selectbox("Select Grand Prix", list(race_map.keys()), index=len(race_map)-1)
         with c2:
-            # Allow user to select up to reasonable max laps, we can handle error later if it exceeds
             lap_select = st.number_input("Select Lap", min_value=1, max_value=70, value=1)
         with c3:
-            st.write("") # Formatting spacer
+            st.write("") 
             load_btn = st.button("Initialize Data", type="primary", use_container_width=True)
         
         round_num = race_map[selected_race_name]
-        
-        # TABS FOR VIEW
-        tab_map, tab_tel = st.tabs(["🗺️ Track Map", "📈 Telemetry"])
-        
-        # Initialize Animator
-        # Note: We create the object but only load heavy data when requested
         anim = animator.RaceAnimator(year, round_num)
         
-        # --- TAB 1: INTERACTIVE MAP ---
-        with tab_map:
-            if load_btn or st.session_state.get('data_loaded'):
-                st.session_state['data_loaded'] = True # Keep state active
-                
-                with st.spinner("Processing telemetry for replay..."):
-                    if anim.load_session():
-                        # Use the new Plotly animation method
+        # --- DATA LOADER ---
+        if load_btn or st.session_state.get('data_loaded'):
+            st.session_state['data_loaded'] = True
+            
+            with st.spinner("Fetching Session Data..."):
+                if anim.load_session():
+                    # --- WEATHER COMPONENT ---
+                    # Only show if session has weather data
+                    if hasattr(anim.session, 'weather_data'):
+                        w = anim.session.weather_data.iloc[0] # Start of session weather
+                        w_cols = st.columns(4)
+                        with w_cols[0]: st.metric("Air Temp", f"{w['AirTemp']}°C")
+                        with w_cols[1]: st.metric("Track Temp", f"{w['TrackTemp']}°C")
+                        with w_cols[2]: st.metric("Humidity", f"{w['Humidity']}%")
+                        with w_cols[3]: st.metric("Rain", "YES" if w['Rainfall'] else "NO")
+                    
+                    st.divider()
+
+                    # --- TABS ---
+                    tab_map, tab_tel = st.tabs(["🗺️ Ghost Map", "📈 Telemetry"])
+                    
+                    with tab_map:
                         fig = anim.create_plotly_animation(lap_number=lap_select)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
-                            st.caption(f"Showing Ghost Replay for Lap {lap_select}. Press Play to animate.")
                         else:
-                            st.warning("No telemetry data available for this lap/driver combination.")
-                    else:
-                        st.error("Failed to load session data.")
+                            st.warning(f"Map data unavailable for Lap {lap_select}.")
 
-        # --- TAB 2: TELEMETRY DEEP DIVE ---
-        with tab_tel:
-            st.markdown("### Driver Input Comparison")
-            st.info("Compare throttle, brake, and speed traces between two drivers to analyze driving styles.")
-            
-            # We need the session loaded to get the driver list
-            if st.session_state.get('data_loaded') and anim.session:
-                drivers = anim.session.results['Abbreviation'].tolist()
-                
-                dc1, dc2, dc3 = st.columns([1, 1, 1])
-                with dc1:
-                    d1 = st.selectbox("Driver 1", drivers, index=0)
-                with dc2:
-                    d2 = st.selectbox("Driver 2", drivers, index=1)
-                with dc3:
-                    st.write("") # Spacer
-                    compare_btn = st.button("Compare Inputs", use_container_width=True)
-                
-                if compare_btn:
-                    with st.spinner(f"Comparing {d1} vs {d2}..."):
-                        t_fig = telemetry_view.plot_telemetry_comparison(anim.session, d1, d2, lap_select)
-                        if t_fig:
-                            st.plotly_chart(t_fig, use_container_width=True)
-                        else:
-                            st.warning("Telemetry unavailable for one or both drivers on this lap.")
-            else:
-                st.caption("Please click 'Initialize Data' above to load the drivers list.")
+                    with tab_tel:
+                        st.markdown("### Driver Input Comparison")
+                        drivers = anim.session.results['Abbreviation'].tolist()
+                        
+                        dc1, dc2, dc3 = st.columns([1, 1, 1])
+                        with dc1: d1 = st.selectbox("Driver 1", drivers, index=0)
+                        with dc2: d2 = st.selectbox("Driver 2", drivers, index=1)
+                        with dc3: 
+                            st.write("")
+                            compare_btn = st.button("Compare Inputs", use_container_width=True)
+                        
+                        if compare_btn:
+                            with st.spinner("Processing..."):
+                                t_fig, err = telemetry_view.plot_telemetry_comparison(anim.session, d1, d2, lap_select)
+                                if t_fig:
+                                    st.plotly_chart(t_fig, use_container_width=True)
+                                else:
+                                    st.error(f"Telemetry Error: {err}")
+                else:
+                    st.error("Failed to load session from FastF1.")
 
     except Exception as e:
         st.error(f"System Error: {e}")
+
+# --- PAGE 3: STRATEGY & PACE ---
+elif page == "Strategy & Pace":
+    st.title("♟️ STRATEGY ANALYSIS")
+    
+    try:
+        schedule = fastf1.get_event_schedule(year, include_testing=False)
+        races_with_data = schedule[schedule['Session5'].notna()]
+        race_map = dict(zip(races_with_data['EventName'], races_with_data['RoundNumber']))
+        
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            selected_race = st.selectbox("Select Grand Prix", list(race_map.keys()), index=len(race_map)-1)
+        with c2:
+            st.write("")
+            load_strat_btn = st.button("Load Analysis", type="primary", use_container_width=True)
+
+        if load_strat_btn:
+            round_num = race_map[selected_race]
+            with st.spinner(f"Analyzing {selected_race}..."):
+                # Load session locally for this page
+                session = fastf1.get_session(year, round_num, 'R')
+                session.load()
+                
+                t1, t2 = st.tabs(["🏎️ Race Pace", "🛞 Tyre Strategy"])
+                
+                with t1:
+                    pace_fig = telemetry_view.plot_lap_times(session)
+                    if pace_fig:
+                        st.plotly_chart(pace_fig, use_container_width=True)
+                    else:
+                        st.warning("Could not load lap time data.")
+                
+                with t2:
+                    # Fallback to matplotlib dashboard if needed, or implement plotly version
+                    try:
+                        fig = dashboard.plot_strategy_dashboard(year, round_num=round_num)
+                        st.pyplot(fig, use_container_width=True)
+                    except:
+                        st.warning("Strategy data unavailable.")
+
+    except Exception as e:
+        st.error(f"Strategy Error: {e}")
