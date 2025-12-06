@@ -35,9 +35,10 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         } => {}
         _ = async {
             while let Some(Ok(msg)) = rx.next().await {
-                match msg {
-                    Message::Close(_) => { info!("received close"); break; }
-                    _ => {}
+                // FIX: Used if let instead of match for single pattern
+                if let Message::Close(_) = msg {
+                    info!("received close");
+                    break;
                 }
             }
         } => {}
