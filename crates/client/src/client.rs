@@ -107,5 +107,5 @@ async fn negotiate() -> Result<Negotiaion, Box<dyn Error>> {
 
 fn env_url() -> Option<Url> {
     let env_url = env::var_os("WS_URL")?.into_string().ok()?;
-    Some(Url::parse(&env_url).ok()?)
+    Url::parse(&env_url).ok()
 }
