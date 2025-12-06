@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::net::SocketAddr;
 use axum::{extract::{ws::{Message, WebSocket}, State, WebSocketUpgrade}, response::Response, routing::get, Router};
 use futures::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info};
 
 pub struct AppState { tx: broadcast::Sender<String>, mpsc_tx: mpsc::Sender<()> }
@@ -19,7 +19,7 @@ pub async fn init(tx: broadcast::Sender<String>, mpsc_tx: mpsc::Sender<()>) {
     let app = Router::new().route("/ws", get(handle_http)).with_state(app_state.clone());
     let addr = addr();
     info!("serving ws simulator on {}", addr);
-    axum::Server::bind(&addr)
+    hyper::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
         .expect("failed to serve http server");
@@ -37,13 +37,17 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     }
     info!("client connected to ws simulator");
 
-    let (mut tx, mut rx) = socket.split();
+    let (tx, mut rx) = socket.split();
+    // wrap the sink in an Arc<Mutex<...>> so both branches can send without
+    // borrowing the underlying sink mutably in two different async blocks
+    let tx = Arc::new(Mutex::new(tx));
 
     tokio::select! {
         // forward broadcast messages to the websocket client
         _ = async {
             while let Ok(msg) = reader_rx.recv().await {
-                if let Err(e) = tx.send(Message::text(msg)).await {
+                let mut tx_lock = tx.lock().await;
+                if let Err(e) = tx_lock.send(Message::text(msg)).await {
                     error!("failed to send message: {}", e);
                     break;
                 }
@@ -60,7 +64,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                     }
                     Message::Ping(payload) => {
                         // respond with Pong to keep the connection healthy
-                        if let Err(e) = tx.send(Message::Pong(payload)).await {
+                        let mut tx_lock = tx.lock().await;
+                        if let Err(e) = tx_lock.send(Message::Pong(payload)).await {
                             error!("failed to send pong: {}", e);
                             break;
                         }
