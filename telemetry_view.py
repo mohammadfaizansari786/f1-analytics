@@ -1,13 +1,14 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import pandas as pd  # <--- Added missing import
 
 def plot_telemetry_comparison(session, driver1, driver2, lap_number):
     """
     Compares telemetry inputs (Speed, Throttle, Brake, Gear) between two drivers.
     """
     try:
-        # 1. robust Data Loading
+        # 1. Robust Data Loading
         laps1 = session.laps.pick_driver(driver1)
         laps2 = session.laps.pick_driver(driver2)
         
@@ -105,6 +106,8 @@ def plot_lap_times(session):
 
             # Quick anomaly filter (107% rule approx)
             min_lap = drv_laps['LapTime'].min()
+            
+            # FIX: pandas (pd) is now imported, so this line works
             if pd.isna(min_lap): continue
             
             threshold = min_lap * 1.07
