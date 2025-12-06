@@ -2,7 +2,34 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import fastf1.plotting
+import plotly.express as px
 
+def plot_championship_standings(df):
+    """
+    Plots the championship points progression.
+    Expects df to have columns: ['Round', 'Driver', 'Points']
+    """
+    # Calculate cumulative points
+    df_sorted = df.sort_values(['Driver', 'Round'])
+    df_sorted['CumulativePoints'] = df_sorted.groupby('Driver')['Points'].cumsum()
+    
+    fig = px.line(
+        df_sorted, 
+        x="Round", 
+        y="CumulativePoints", 
+        color="Driver",
+        markers=True,
+        title="Driver Championship Battle"
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor="#333"),
+        hovermode="x unified"
+    )
+    return fig
 def load_data(year):
     """Loads the CSV data securely."""
     filename = f'f1_season_{year}_data.csv'
@@ -93,4 +120,5 @@ def plot_team_performance(df):
         margin=dict(l=20, r=20, t=50, b=20),
         font=dict(family="Titillium Web", size=14)
     )
+
     return fig
