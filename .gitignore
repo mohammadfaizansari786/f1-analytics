@@ -22,3 +22,8 @@ f1_cache/
 
 # --- Database ---
 data/db/
+dash/node_modules/
+node_modules/
+dash/.next/
+legacy_backup/
+data_samples/
